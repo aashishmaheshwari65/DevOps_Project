@@ -1,0 +1,118 @@
+# -----------------------------------------------------------------------------
+# GitHub Actions: install → build → deploy to EC2 over SSH
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   EC2_HOST         — e.g. ec2-1-2-3-4.compute.amazonaws.com or 1.2.3.4
+#   EC2_USER         — e.g. ubuntu
+#   EC2_SSH_KEY      — private key (full PEM) for the instance key pair
+# Optional:
+#   DEPLOY_DIR       — path on server, default ~/smart-file-share
+#   REPO_SSH_URL     — if the server should git clone; otherwise use rsync of workspace
+# -----------------------------------------------------------------------------
+
+name: Build and deploy
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  build:
+    name: Install and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install backend
+        working-directory: backend
+        run: npm ci
+
+      - name: Install and build frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: Upload frontend dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    needs: build
+    if: "github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: Prepare SSH key
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          if [ -z "$EC2_SSH_KEY" ]; then
+            echo "EC2_SSH_KEY secret is empty — configure deploy secrets in the repo to enable SSH."
+            exit 0
+          fi
+          printf '%s' "$EC2_SSH_KEY" > "$RUNNER_TEMP/key"
+          chmod 600 "$RUNNER_TEMP/key"
+
+      - name: Rsync project to server
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          DEPLOY_DIR_SECRET: ${{ secrets.DEPLOY_DIR }}
+        run: |
+          if [ -z "$EC2_SSH_KEY" ] || [ -z "$HOST" ] || [ -z "$EC2_USER" ]; then
+            echo "Missing EC2_SSH_KEY, EC2_HOST, or EC2_USER — skipping deploy. Build job still passed."
+            exit 0
+          fi
+          REMOTE_DIR="${DEPLOY_DIR_SECRET}"
+          if [ -z "$REMOTE_DIR" ]; then
+            REMOTE_DIR="/home/${EC2_USER}/smart-file-share"
+          fi
+          ssh -i "$RUNNER_TEMP/key" -o StrictHostKeyChecking=accept-new \
+            "${EC2_USER}@${HOST}" "mkdir -p '$REMOTE_DIR'"
+          rsync -avz --delete \
+            -e "ssh -i $RUNNER_TEMP/key -o StrictHostKeyChecking=accept-new" \
+            --exclude 'node_modules' --exclude '.git' --exclude 'frontend/node_modules' --exclude 'backend/node_modules' \
+            ./ "${EC2_USER}@${HOST}:$REMOTE_DIR/"
+
+      - name: Remote docker compose
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          DEPLOY_DIR_SECRET: ${{ secrets.DEPLOY_DIR }}
+        run: |
+          if [ -z "$EC2_SSH_KEY" ] || [ -z "$HOST" ] || [ -z "$EC2_USER" ]; then
+            exit 0
+          fi
+          REMOTE_DIR="${DEPLOY_DIR_SECRET}"
+          if [ -z "$REMOTE_DIR" ]; then
+            REMOTE_DIR="/home/${EC2_USER}/smart-file-share"
+          fi
+          ssh -i "$RUNNER_TEMP/key" -o StrictHostKeyChecking=accept-new \
+            "${EC2_USER}@${HOST}" "cd '$REMOTE_DIR' && docker compose --env-file .env build && docker compose --env-file .env up -d"

@@ -1,0 +1,13 @@
+node_modules/
+**/node_modules/
+.env
+.env.*
+!.env.example
+dist/
+frontend/dist
+backend/public
+.DS_Store
+*.log
+lambda/**/function.zip
+.idea/
+.vscode/

@@ -1,0 +1,7 @@
+{
+  "name": "s3-upload-logger",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Simple Lambda: runs when new objects are created in S3; logs to CloudWatch",
+  "main": "index.mjs"
+}

@@ -1,0 +1,40 @@
+/* Simple design tokens: calm, readable, good contrast */
+:root {
+  --bg: #0f1419;
+  --bg-elevated: #1a222c;
+  --border: #2a3542;
+  --text: #e8edf3;
+  --muted: #8b9aac;
+  --accent: #3d8bfd;
+  --accent-dim: #2563c7;
+  --success: #34d399;
+  --danger: #f87171;
+  --radius: 12px;
+  --font: 'DM Sans', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+}
+
+code {
+  font-size: 0.9em;
+  background: var(--bg-elevated);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+}

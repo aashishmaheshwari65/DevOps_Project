@@ -1,0 +1,38 @@
+# Local / server stack: app + MongoDB. Add AWS creds and bucket via .env
+#   docker compose --env-file .env up --build -d
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/smartfile}
+      PORT: "3000"
+      BIND_HOST: 0.0.0.0
+      NODE_ENV: production
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    # Pass through AWS: either set in .env or use IAM instance role on EC2 (no keys in .env)
+    # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, S3_BUCKET
+
+volumes:
+  mongo_data: {}
