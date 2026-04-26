@@ -7,7 +7,8 @@
 #   EC2_SSH_KEY      — private key (full PEM) for the instance key pair
 # Optional:
 #   DEPLOY_DIR       — path on server, default ~/smart-file-share
-#   REPO_SSH_URL     — if the server should git clone; otherwise use rsync of workspace
+#   EC2_ENV_FILE     — full multiline .env for production; written to $DEPLOY_DIR/.env each deploy
+#                     (or create .env manually on EC2 once; rsync excludes .env from deletion)
 # -----------------------------------------------------------------------------
 
 name: Build and deploy
@@ -98,7 +99,31 @@ jobs:
           rsync -avz --delete \
             -e "ssh -i $RUNNER_TEMP/key -o StrictHostKeyChecking=accept-new" \
             --exclude 'node_modules' --exclude '.git' --exclude 'frontend/node_modules' --exclude 'backend/node_modules' \
+            --exclude '.env' \
             ./ "${EC2_USER}@${HOST}:$REMOTE_DIR/"
+
+      - name: Write .env on EC2 from secret (optional)
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          DEPLOY_DIR_SECRET: ${{ secrets.DEPLOY_DIR }}
+          EC2_ENV_FILE: ${{ secrets.EC2_ENV_FILE }}
+        run: |
+          if [ -z "$EC2_SSH_KEY" ] || [ -z "$HOST" ] || [ -z "$EC2_USER" ]; then
+            exit 0
+          fi
+          if [ -z "$EC2_ENV_FILE" ]; then
+            echo "EC2_ENV_FILE secret not set — using .env already on the server (create once via SSH or scp)."
+            exit 0
+          fi
+          REMOTE_DIR="${DEPLOY_DIR_SECRET}"
+          if [ -z "$REMOTE_DIR" ]; then
+            REMOTE_DIR="/home/${EC2_USER}/smart-file-share"
+          fi
+          printf '%s' "$EC2_ENV_FILE" | ssh -i "$RUNNER_TEMP/key" -o StrictHostKeyChecking=accept-new \
+            "${EC2_USER}@${HOST}" "mkdir -p \"${REMOTE_DIR}\" && cat > \"${REMOTE_DIR}/.env\" && chmod 600 \"${REMOTE_DIR}/.env\""
+          echo "Wrote .env to $REMOTE_DIR from EC2_ENV_FILE secret."
 
       - name: Remote docker compose
         env:
@@ -114,5 +139,7 @@ jobs:
           if [ -z "$REMOTE_DIR" ]; then
             REMOTE_DIR="/home/${EC2_USER}/smart-file-share"
           fi
+          # EC2 must have Docker Engine + "docker compose" (Compose V2 plugin). If you see "docker: command not found", install Docker on the instance (README).
           ssh -i "$RUNNER_TEMP/key" -o StrictHostKeyChecking=accept-new \
-            "${EC2_USER}@${HOST}" "cd '$REMOTE_DIR' && docker compose --env-file .env build && docker compose --env-file .env up -d"
+            "${EC2_USER}@${HOST}" \
+            "set -e; export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\" ; cd \"${REMOTE_DIR}\" && if [ ! -f .env ]; then echo '::error::Missing .env. SSH once and create it, or set repository secret EC2_ENV_FILE (full file contents).'; exit 1; fi; if ! command -v docker >/dev/null 2>&1; then echo '::error::Install Docker on EC2 (get.docker.com), then re-run. See project README.'; exit 127; fi; docker compose --env-file .env build; docker compose --env-file .env up -d"
