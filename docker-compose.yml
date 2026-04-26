@@ -22,7 +22,8 @@ services:
       mongo:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "80:3000"    # open SG port 80 → browse http://YOUR_PUBLIC_IP/ (no :3000)
+      - "3000:3000"  # http://YOUR_PUBLIC_IP:3000/ still works
     env_file:
       - .env
     environment:
