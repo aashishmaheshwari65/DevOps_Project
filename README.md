@@ -1,5 +1,6 @@
 # Smart File Share
 
+file-sharing
 A small, **production-style** web application: users upload files through a React UI, the **Node.js + Express** API stores bytes in **Amazon S3** and metadata in **MongoDB**, and downloads use **short-lived pre-signed URLs** (private bucket, no direct public listing).
 
 This repo is meant for **learning DevOps on AWS**: Docker, Nginx reverse proxy, EC2 deploy, S3 + Lambda + CloudWatch, and a **GitHub Actions** pipeline that builds the app and deploys over **SSH**.
