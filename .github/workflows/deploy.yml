@@ -7,8 +7,9 @@
 #   EC2_SSH_KEY      — private key (full PEM) for the instance key pair
 # Optional:
 #   DEPLOY_DIR       — path on server, default ~/smart-file-share
-#   EC2_ENV_FILE     — full multiline .env for production; written to $DEPLOY_DIR/.env each deploy
-#                     (or create .env manually on EC2 once; rsync excludes .env from deletion)
+#   EC2_USER         — must match the server login, e.g. ec2-user (Amazon Linux) or ubuntu
+#   EC2_ENV_FILE     — required for CI unless you already created .env on the server at DEPLOY_DIR/.env
+#                     (paste full multiline .env; written before docker compose; never commit to git)
 # -----------------------------------------------------------------------------
 
 name: Build and deploy
@@ -113,17 +114,23 @@ jobs:
           if [ -z "$EC2_SSH_KEY" ] || [ -z "$HOST" ] || [ -z "$EC2_USER" ]; then
             exit 0
           fi
-          if [ -z "$EC2_ENV_FILE" ]; then
-            echo "EC2_ENV_FILE secret not set — using .env already on the server (create once via SSH or scp)."
-            exit 0
-          fi
           REMOTE_DIR="${DEPLOY_DIR_SECRET}"
           if [ -z "$REMOTE_DIR" ]; then
             REMOTE_DIR="/home/${EC2_USER}/smart-file-share"
           fi
-          printf '%s' "$EC2_ENV_FILE" | ssh -i "$RUNNER_TEMP/key" -o StrictHostKeyChecking=accept-new \
-            "${EC2_USER}@${HOST}" "mkdir -p \"${REMOTE_DIR}\" && cat > \"${REMOTE_DIR}/.env\" && chmod 600 \"${REMOTE_DIR}/.env\""
-          echo "Wrote .env to $REMOTE_DIR from EC2_ENV_FILE secret."
+          if [ -n "$EC2_ENV_FILE" ]; then
+            printf '%s' "$EC2_ENV_FILE" | ssh -i "$RUNNER_TEMP/key" -o StrictHostKeyChecking=accept-new \
+              "${EC2_USER}@${HOST}" "mkdir -p \"${REMOTE_DIR}\" && cat > \"${REMOTE_DIR}/.env\" && chmod 600 \"${REMOTE_DIR}/.env\""
+            echo "Wrote .env to $REMOTE_DIR from EC2_ENV_FILE secret."
+          else
+            echo "EC2_ENV_FILE is not set — checking for an existing .env on the server..."
+            ssh -i "$RUNNER_TEMP/key" -o StrictHostKeyChecking=accept-new \
+              "${EC2_USER}@${HOST}" "test -f \"${REMOTE_DIR}/.env\"" || {
+                echo "::error::No .env on the server and no EC2_ENV_FILE secret. Add GitHub secret EC2_ENV_FILE (full .env), or create ${REMOTE_DIR}/.env (see README). Also verify EC2_USER matches the server (e.g. ec2-user vs ubuntu)."
+                exit 1
+              }
+            echo "Found existing .env on server."
+          fi
 
       - name: Remote docker compose
         env:
@@ -142,4 +149,4 @@ jobs:
           # EC2 must have Docker Engine + "docker compose" (Compose V2 plugin). If you see "docker: command not found", install Docker on the instance (README).
           ssh -i "$RUNNER_TEMP/key" -o StrictHostKeyChecking=accept-new \
             "${EC2_USER}@${HOST}" \
-            "set -e; export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\" ; cd \"${REMOTE_DIR}\" && if [ ! -f .env ]; then echo '::error::Missing .env. SSH once and create it, or set repository secret EC2_ENV_FILE (full file contents).'; exit 1; fi; if ! command -v docker >/dev/null 2>&1; then echo '::error::Install Docker on EC2 (get.docker.com), then re-run. See project README.'; exit 127; fi; docker compose --env-file .env build; docker compose --env-file .env up -d"
+            "set -e; export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\" ; cd \"${REMOTE_DIR}\" && if [ ! -f .env ]; then echo '::error::Missing .env. SSH once and create it, or set repository secret EC2_ENV_FILE (full file contents).'; exit 1; fi; if ! command -v docker >/dev/null 2>&1; then echo '::error::Install Docker on EC2 (get.docker.com), then re-run. See project README.'; exit 127; fi; export COMPOSE_BAKE=0; docker compose --env-file .env build; docker compose --env-file .env up -d"

@@ -40,6 +40,9 @@ if [[ ! -f .env ]]; then
 fi
 
 echo "[deploy] docker compose build and up"
+# Amazon Linux 2023 ships old buildx; Compose 2.40+ defaults to "bake" and needs buildx 0.17+.
+# COMPOSE_BAKE=0 uses the legacy build path (see: github.com/amazonlinux/amazon-linux-2023 issues).
+export COMPOSE_BAKE=0
 docker compose --env-file .env pull 2>/dev/null || true
 docker compose --env-file .env build
 docker compose --env-file .env up -d
