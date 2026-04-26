@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
 # Amazon Linux 2023 often ships buildx < 0.17; new Docker Compose needs ≥ 0.17.
-# This downloads the latest official buildx binary into Docker's plugin path.
-# Safe to run on every deploy (overwrites; ~ tens of MB per run).
+# Official release files are named e.g. buildx-v0.20.0.linux-amd64 (not docker-buildx-linux-amd64).
+# Pin a version >= 0.17; bump occasionally for security.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -27,13 +27,16 @@ case "$UNAME_M" in
   *) echo "Unsupported arch: $UNAME_M" >&2; exit 1 ;;
 esac
 
-URL="https://github.com/docker/buildx/releases/latest/download/docker-buildx-linux-${DL_ARCH}"
+# v0.20.0+ satisfies Compose; override with BUILDX_TAG when testing newer releases
+BUILDX_TAG="${BUILDX_TAG:-v0.20.0}"
+URL="https://github.com/docker/buildx/releases/download/${BUILDX_TAG}/buildx-${BUILDX_TAG}.linux-${DL_ARCH}"
 PLUGIN_DIR="/usr/libexec/docker/cli-plugins"
 if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
 
 $SUDO mkdir -p "$PLUGIN_DIR"
 echo "Installing/updating Docker Buildx: $URL"
 curl -fSL "$URL" -o /tmp/docker-buildx-bin
+# Plugin binary name must be docker-buildx; release file is e.g. buildx-v0.20.0.linux-amd64
 $SUDO install -m 0755 /tmp/docker-buildx-bin "$PLUGIN_DIR/docker-buildx"
 rm -f /tmp/docker-buildx-bin
 docker buildx version
