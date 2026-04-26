@@ -2,14 +2,13 @@
 # GitHub Actions: install → build → deploy to EC2 over SSH
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
-#   EC2_HOST         — e.g. ec2-1-2-3-4.compute.amazonaws.com or 1.2.3.4
-#   EC2_USER         — e.g. ubuntu
-#   EC2_SSH_KEY      — private key (full PEM) for the instance key pair
+#   EC2_HOST     — public IP or DNS of the instance
+#   EC2_USER     — must match the AMI login, e.g. ec2-user (Amazon Linux) or ubuntu (Ubuntu)
+#   EC2_SSH_KEY  — full private key (.pem) including BEGIN/END lines
 # Optional:
-#   DEPLOY_DIR       — path on server, default ~/smart-file-share
-#   EC2_USER         — must match the server login, e.g. ec2-user (Amazon Linux) or ubuntu
-#   EC2_ENV_FILE     — required for CI unless you already created .env on the server at DEPLOY_DIR/.env
-#                     (paste full multiline .env; written before docker compose; never commit to git)
+#   DEPLOY_DIR   — absolute path on server; default: /home/$EC2_USER/smart-file-share
+#   EC2_ENV_FILE — full multiline .env (production). If unset, a .env file must already exist on the server
+#                 (not in git; rsync does not remove existing .env)
 # -----------------------------------------------------------------------------
 
 name: Build and deploy
@@ -132,6 +131,24 @@ jobs:
             echo "Found existing .env on server."
           fi
 
+      - name: Ensure Docker buildx on EC2 (fixes Amazon Linux 2023)
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          DEPLOY_DIR_SECRET: ${{ secrets.DEPLOY_DIR }}
+        run: |
+          if [ -z "$EC2_SSH_KEY" ] || [ -z "$HOST" ] || [ -z "$EC2_USER" ]; then
+            exit 0
+          fi
+          REMOTE_DIR="${DEPLOY_DIR_SECRET}"
+          if [ -z "$REMOTE_DIR" ]; then
+            REMOTE_DIR="/home/${EC2_USER}/smart-file-share"
+          fi
+          ssh -i "$RUNNER_TEMP/key" -o StrictHostKeyChecking=accept-new \
+            "${EC2_USER}@${HOST}" "bash -s" < scripts/ensure-buildx.sh
+          # Note: run from runner checkout; uses sudo on the instance (default for ec2-user on EC2)
+
       - name: Remote docker compose
         env:
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
@@ -149,4 +166,4 @@ jobs:
           # EC2 must have Docker Engine + "docker compose" (Compose V2 plugin). If you see "docker: command not found", install Docker on the instance (README).
           ssh -i "$RUNNER_TEMP/key" -o StrictHostKeyChecking=accept-new \
             "${EC2_USER}@${HOST}" \
-            "set -e; export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\" ; cd \"${REMOTE_DIR}\" && if [ ! -f .env ]; then echo '::error::Missing .env. SSH once and create it, or set repository secret EC2_ENV_FILE (full file contents).'; exit 1; fi; if ! command -v docker >/dev/null 2>&1; then echo '::error::Install Docker on EC2 (get.docker.com), then re-run. See project README.'; exit 127; fi; export COMPOSE_BAKE=0; docker compose --env-file .env build; docker compose --env-file .env up -d"
+            "set -e; export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\" ; cd \"${REMOTE_DIR}\" && if [ ! -f .env ]; then echo '::error::Missing .env. SSH once and create it, or set repository secret EC2_ENV_FILE (full file contents).'; exit 1; fi; if ! command -v docker >/dev/null 2>&1; then echo '::error::Install Docker on EC2 (get.docker.com), then re-run. See project README.'; exit 127; fi; export COMPOSE_BAKE=0; docker compose --env-file .env build --progress=plain; docker compose --env-file .env up -d"
